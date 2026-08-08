@@ -2,18 +2,22 @@
 db.py
 
 Persistent memory backed by Neon PostgreSQL, using a single JSONB column
-per chat. The rest of the app reads/writes/deletes fields inside that JSON
-blob exactly like it would with a local JSON file — the difference is that
-Postgres guarantees the data survives redeploys and restarts, which a plain
-file on most free hosting platforms does not.
+per chat — functions here read/write/delete fields inside that JSON blob
+the same way you would with a local JSON file, but the data survives
+redeploys and restarts.
 
 Memory JSON shape (per chat_id):
 {
-    "summary": str,
-    "recent_messages": [{"role": "user" | "assistant", "text": str, "ts": float}, ...],
-    "last_owner_reply_at": float | None,
+    "summary": str,                         # long-term facts, kept forever
+    "recent_messages": [...],               # short-term "live" context
+    "last_message_at": float | None,        # any message (in or out)
+    "last_owner_reply_at": float | None,     # owner personally replied
     "last_bot_reply_at": float | None,
 }
+
+24-hour rule: if more than 24h passed since the last message in a chat,
+`recent_messages` is cleared (fresh short-term context) but `summary` is
+kept — long-term facts about who this person is are not forgotten.
 """
 
 import json
@@ -26,9 +30,12 @@ from config import settings
 
 _pool: Optional[asyncpg.Pool] = None
 
+RECENT_CONTEXT_TTL_SECONDS = 24 * 60 * 60
+
 EMPTY_MEMORY = {
     "summary": "",
     "recent_messages": [],
+    "last_message_at": None,
     "last_owner_reply_at": None,
     "last_bot_reply_at": None,
 }
@@ -99,8 +106,17 @@ async def save_memory(chat_id: int, memory: dict[str, Any]) -> None:
 
 async def append_recent_message(chat_id: int, role: str, text: str, limit: int) -> None:
     memory = await get_memory(chat_id)
+
+    # 24-hour rule: if the gap since the last message is too long, this is
+    # treated as a fresh short-term conversation — but the long-term summary
+    # is intentionally NOT touched.
+    last_at = memory.get("last_message_at")
+    if last_at and (time.time() - last_at) > RECENT_CONTEXT_TTL_SECONDS:
+        memory["recent_messages"] = []
+
     memory["recent_messages"].append({"role": role, "text": text, "ts": time.time()})
     memory["recent_messages"] = memory["recent_messages"][-limit:]
+    memory["last_message_at"] = time.time()
     await save_memory(chat_id, memory)
 
 
