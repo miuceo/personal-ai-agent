@@ -40,6 +40,7 @@ class Settings:
 
     owner_pause_minutes: int
     short_history_limit: int
+    initial_reply_delay_seconds: int
 
 
 settings = Settings(
@@ -60,4 +61,5 @@ settings = Settings(
     groq_stt_model=os.environ.get("GROQ_STT_MODEL", "whisper-large-v3-turbo"),
     owner_pause_minutes=int(os.environ.get("OWNER_PAUSE_MINUTES", 10)),
     short_history_limit=int(os.environ.get("SHORT_HISTORY_LIMIT", 6)),
+    initial_reply_delay_seconds=int(os.environ.get("INITIAL_REPLY_DELAY_SECONDS", 10))
 )
