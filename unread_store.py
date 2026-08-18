@@ -20,13 +20,21 @@ STORE_PATH = Path(__file__).parent / "unread.json"
 def _load() -> list[dict]:
     if not STORE_PATH.exists():
         return []
-    with STORE_PATH.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with STORE_PATH.open("r", encoding="utf-8") as f:
+            entries = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        # A truncated file (e.g. killed mid-write) must not take the bot down.
+        return []
+    return entries if isinstance(entries, list) else []
 
 
 def _save(entries: list[dict]) -> None:
-    with STORE_PATH.open("w", encoding="utf-8") as f:
+    # Write-then-rename so a crash can never leave a half-written digest.
+    tmp_path = STORE_PATH.with_suffix(".json.tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
         json.dump(entries, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(STORE_PATH)
 
 
 def append(user_name: str, their_message: str, bot_reply: str, is_important: bool) -> None:
@@ -60,10 +68,10 @@ def format_digest(entries: list[dict]) -> str:
 
     lines = ["📋 O'qilmagan xabarlar:\n"]
     for e in entries:
-        flag = "🔴" if e["is_important"] else "🟢"
+        flag = "🔴" if e.get("is_important") else "🟢"
         lines.append(
-            f"{flag} {e['user_name']}\n"
-            f"Ular: {e['their_message']}\n"
-            f"Men javob berdim: {e['bot_reply']}"
+            f"{flag} {e.get('user_name', 'Noma‘lum')}\n"
+            f"Ular: {e.get('their_message', '')}\n"
+            f"Men javob berdim: {e.get('bot_reply', '')}"
         )
     return "\n\n".join(lines)

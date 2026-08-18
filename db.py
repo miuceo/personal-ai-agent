@@ -20,8 +20,10 @@ Memory JSON shape (per chat_id):
 kept — long-term facts about who this person is are not forgotten.
 """
 
+import asyncio
 import json
 import time
+from collections import defaultdict
 from typing import Any, Optional
 
 import asyncpg
@@ -29,6 +31,11 @@ import asyncpg
 from config import settings
 
 _pool: Optional[asyncpg.Pool] = None
+
+# Every memory update is a read-modify-write of one JSON blob, so two
+# concurrent handlers touching the same chat would clobber each other.
+# One lock per chat serializes them.
+_chat_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 RECENT_CONTEXT_TTL_SECONDS = 24 * 60 * 60
 
@@ -72,12 +79,31 @@ async def is_known_contact(chat_id: int) -> bool:
     return row is not None
 
 
+async def close_db() -> None:
+    global _pool
+    if _pool is not None:
+        await _pool.close()
+        _pool = None
+
+
 async def get_memory(chat_id: int) -> dict[str, Any]:
     pool = _pool_or_raise()
     row = await pool.fetchrow("SELECT memory FROM chats WHERE chat_id = $1", chat_id)
     if row is None:
-        return dict(EMPTY_MEMORY)
-    return json.loads(row["memory"])
+        return _empty_memory()
+    memory = json.loads(row["memory"])
+    # A row inserted before a field existed (or an empty '{}' default) must
+    # not KeyError downstream.
+    for key, value in EMPTY_MEMORY.items():
+        memory.setdefault(key, value.copy() if isinstance(value, list) else value)
+    return memory
+
+
+def _empty_memory() -> dict[str, Any]:
+    return {
+        key: (value.copy() if isinstance(value, list) else value)
+        for key, value in EMPTY_MEMORY.items()
+    }
 
 
 async def ensure_chat(chat_id: int, user_name: str) -> None:
@@ -86,7 +112,8 @@ async def ensure_chat(chat_id: int, user_name: str) -> None:
         """
         INSERT INTO chats (chat_id, user_name, memory, updated_at)
         VALUES ($1, $2, $3::jsonb, now())
-        ON CONFLICT (chat_id) DO UPDATE SET user_name = EXCLUDED.user_name
+        ON CONFLICT (chat_id) DO UPDATE
+            SET user_name = COALESCE(NULLIF(EXCLUDED.user_name, ''), chats.user_name)
         """,
         chat_id,
         user_name,
@@ -105,37 +132,39 @@ async def save_memory(chat_id: int, memory: dict[str, Any]) -> None:
 
 
 async def append_recent_message(chat_id: int, role: str, text: str, limit: int) -> None:
-    memory = await get_memory(chat_id)
+    async with _chat_locks[chat_id]:
+        memory = await get_memory(chat_id)
 
-    # 24-hour rule: if the gap since the last message is too long, this is
-    # treated as a fresh short-term conversation — but the long-term summary
-    # is intentionally NOT touched.
-    last_at = memory.get("last_message_at")
-    if last_at and (time.time() - last_at) > RECENT_CONTEXT_TTL_SECONDS:
-        memory["recent_messages"] = []
+        # 24-hour rule: if the gap since the last message is too long, this is
+        # treated as a fresh short-term conversation — but the long-term summary
+        # is intentionally NOT touched.
+        last_at = memory.get("last_message_at")
+        if last_at and (time.time() - last_at) > RECENT_CONTEXT_TTL_SECONDS:
+            memory["recent_messages"] = []
 
-    memory["recent_messages"].append({"role": role, "text": text, "ts": time.time()})
-    memory["recent_messages"] = memory["recent_messages"][-limit:]
-    memory["last_message_at"] = time.time()
-    await save_memory(chat_id, memory)
+        memory["recent_messages"].append({"role": role, "text": text, "ts": time.time()})
+        memory["recent_messages"] = memory["recent_messages"][-max(limit, 1) :]
+        memory["last_message_at"] = time.time()
+        await save_memory(chat_id, memory)
+
+
+async def _set_field(chat_id: int, key: str, value: Any) -> None:
+    async with _chat_locks[chat_id]:
+        memory = await get_memory(chat_id)
+        memory[key] = value
+        await save_memory(chat_id, memory)
 
 
 async def update_summary(chat_id: int, new_summary: str) -> None:
-    memory = await get_memory(chat_id)
-    memory["summary"] = new_summary
-    await save_memory(chat_id, memory)
+    await _set_field(chat_id, "summary", new_summary)
 
 
 async def mark_owner_replied(chat_id: int) -> None:
-    memory = await get_memory(chat_id)
-    memory["last_owner_reply_at"] = time.time()
-    await save_memory(chat_id, memory)
+    await _set_field(chat_id, "last_owner_reply_at", time.time())
 
 
 async def mark_bot_replied(chat_id: int) -> None:
-    memory = await get_memory(chat_id)
-    memory["last_bot_reply_at"] = time.time()
-    await save_memory(chat_id, memory)
+    await _set_field(chat_id, "last_bot_reply_at", time.time())
 
 
 async def owner_recently_active(chat_id: int, pause_minutes: int) -> bool:

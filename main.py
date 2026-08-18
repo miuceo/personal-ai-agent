@@ -1,4 +1,3 @@
-                                                                                                                                                                                                                                                                                                                                                                                                                     main.py                                                                                                                                                                                                                                                                                                                                                                                                                                               
 """
 main.py
 
@@ -26,6 +25,7 @@ Run with: python main.py
 
 import asyncio
 import base64
+import logging
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -36,36 +36,68 @@ import transcribe
 import unread_store
 from config import settings
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("secretary")
+
 client = TelegramClient(
     StringSession(settings.telegram_session), settings.api_id, settings.api_hash
 )
 
 INITIAL_REPLY_DELAY_SECONDS = settings.initial_reply_delay_seconds  # "kutish"
 
-# Message IDs the bot itself just sent, so the outgoing-message handler
-# doesn't mistake the bot's own reply for a manual reply typed by the owner.
-SENT_BY_BOT: set[int] = set()
+# Telegram hard-caps a single message at 4096 characters.
+MAX_REPLY_CHARS = 4000
+
+# Replies the bot is about to send, keyed by chat. Registered *before* the
+# send call, because the outgoing-message update can reach us before
+# `event.reply()` returns — otherwise the bot mistakes its own reply for a
+# manual reply by the owner and mutes itself for OWNER_PAUSE_MINUTES.
+PENDING_BOT_REPLIES: dict[int, list[str]] = {}
+
+# Newest incoming message id per chat. If a newer message arrives while an
+# older one is still inside its wait window, only the newest one replies —
+# otherwise a burst of N messages produces N separate answers.
+LAST_INCOMING_ID: dict[int, int] = {}
+
+
+def _claim_pending_reply(chat_id: int, text: str) -> bool:
+    """True if `text` is a reply this bot just sent in `chat_id` (consumes it)."""
+    pending = PENDING_BOT_REPLIES.get(chat_id)
+    if not pending or text not in pending:
+        return False
+    pending.remove(text)
+    if not pending:
+        PENDING_BOT_REPLIES.pop(chat_id, None)
+    return True
 
 
 @client.on(events.NewMessage(outgoing=True))
 async def handle_owner_outgoing(event: events.NewMessage.Event) -> None:
     """Tracks when the owner personally sends a message in a private chat."""
-    if not event.is_private:
-        return
-    if event.message.id in SENT_BY_BOT:
-        SENT_BY_BOT.discard(event.message.id)
-        return
+    try:
+        if not event.is_private:
+            return
 
-    me = await client.get_me()
-    if event.chat_id == me.id:
-        await handle_owner_command(event)
-        return
+        if event.chat_id == settings.owner_id:
+            await handle_owner_command(event)
+            return
 
-    await db.ensure_chat(event.chat_id, "")
-    await db.mark_owner_replied(event.chat_id)
-    await db.append_recent_message(
-        event.chat_id, "assistant", event.raw_text or "(media)", settings.short_history_limit
-    )
+        if _claim_pending_reply(event.chat_id, event.raw_text or ""):
+            return
+
+        await db.ensure_chat(event.chat_id, "")
+        await db.mark_owner_replied(event.chat_id)
+        await db.append_recent_message(
+            event.chat_id,
+            "assistant",
+            event.raw_text or "(media)",
+            settings.short_history_limit,
+        )
+    except Exception:
+        log.exception("Failed to handle outgoing message in chat %s", event.chat_id)
 
 
 async def handle_owner_command(event: events.NewMessage.Event) -> None:
@@ -73,16 +105,23 @@ async def handle_owner_command(event: events.NewMessage.Event) -> None:
     text = (event.raw_text or "").strip()
 
     if text == "/messages":
-        entries = unread_store.get_all()
+        entries = await asyncio.to_thread(unread_store.get_all)
         await event.reply(unread_store.format_digest(entries))
 
     elif text == "/read-all":
-        count = unread_store.clear()
+        count = await asyncio.to_thread(unread_store.clear)
         await event.reply(f"{count} ta yozuv o'chirildi.")
 
 
 @client.on(events.NewMessage(incoming=True))
 async def handle_incoming(event: events.NewMessage.Event) -> None:
+    try:
+        await _handle_incoming(event)
+    except Exception:
+        log.exception("Failed to handle incoming message in chat %s", event.chat_id)
+
+
+async def _handle_incoming(event: events.NewMessage.Event) -> None:
     if not event.is_private:
         return
 
@@ -97,22 +136,28 @@ async def handle_incoming(event: events.NewMessage.Event) -> None:
 
     # Ignore any file that isn't a photo or a voice note — never download
     # documents, APKs, EXEs, ZIPs, etc.
-    if event.document and not (event.photo or event.voice):
+    if event.media is not None and not (event.photo or event.voice):
         return
 
     chat_id = event.chat_id
+    message_id = event.message.id
     user_name = getattr(sender, "first_name", None) or "Noma'lum"
     await db.ensure_chat(chat_id, user_name)
+
+    LAST_INCOMING_ID[chat_id] = message_id
 
     # "1 daqiqa kutish" — give the owner a window to reply personally first.
     if not await db.owner_recently_active(chat_id, settings.owner_pause_minutes):
         await asyncio.sleep(INITIAL_REPLY_DELAY_SECONDS)
 
     # Re-check after the wait: the owner may have replied in the meantime,
-    # either just now or already before this message arrived.
-    if await db.owner_recently_active(chat_id, settings.owner_pause_minutes):
+    # or a newer message from the same person may have superseded this one.
+    superseded = LAST_INCOMING_ID.get(chat_id) != message_id
+    if superseded or await db.owner_recently_active(chat_id, settings.owner_pause_minutes):
         if event.raw_text:
-            await db.append_recent_message(chat_id, "user", event.raw_text, settings.short_history_limit)
+            await db.append_recent_message(
+                chat_id, "user", event.raw_text, settings.short_history_limit
+            )
         return
 
     text = event.raw_text or ""
@@ -139,18 +184,27 @@ async def handle_incoming(event: events.NewMessage.Event) -> None:
         image_base64=image_b64,
     )
 
-    reply_text = result["reply"]
-    is_important = result.get("is_important", False)
-    new_summary = result.get("memory_summary", memory["summary"])
+    reply_text = str(result.get("reply") or "").strip()[:MAX_REPLY_CHARS]
+    if not reply_text:
+        log.warning("Model returned an empty reply for chat %s; skipping", chat_id)
+        return
 
-    sent = await event.reply(reply_text)
-    SENT_BY_BOT.add(sent.id)
+    is_important = bool(result.get("is_important", False))
+    new_summary = result.get("memory_summary") or memory["summary"]
+
+    PENDING_BOT_REPLIES.setdefault(chat_id, []).append(reply_text)
+    try:
+        await event.reply(reply_text)
+    except Exception:
+        _claim_pending_reply(chat_id, reply_text)
+        raise
 
     await db.append_recent_message(chat_id, "assistant", reply_text, settings.short_history_limit)
     await db.update_summary(chat_id, new_summary)
     await db.mark_bot_replied(chat_id)
 
-    unread_store.append(
+    await asyncio.to_thread(
+        unread_store.append,
         user_name=user_name,
         their_message=text or "[rasm]",
         bot_reply=reply_text,
@@ -161,12 +215,15 @@ async def handle_incoming(event: events.NewMessage.Event) -> None:
 async def main() -> None:
     await db.init_db()
     await client.start(phone=settings.phone_number)
-    print("Secretary userbot ishga tushdi. To'xtatish uchun Ctrl+C.")
-    await client.run_until_disconnected()
+    log.info("Secretary userbot ishga tushdi. To'xtatish uchun Ctrl+C.")
+    try:
+        await client.run_until_disconnected()
+    finally:
+        await db.close_db()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
-
-
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log.info("To'xtatildi.")
