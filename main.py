@@ -14,15 +14,12 @@ Behavior:
   OWNER_PAUSE_MINUTES, then automatically resumes.
 - If more than 24h pass since the last message in a chat, the short-term
   "live" context resets (but the long-term memory summary is kept).
-- Every reply the bot sends on the owner's behalf is recorded as an unread
-  digest entry in Postgres. Only the owner (OWNER_ID) can retrieve it with
-  /messages (sent to their own Saved Messages chat), or clear it with
-  /read-all.
-- Owner commands (sent to Saved Messages): /messages, /read-all, /pause
-  (or /pause 30m, /pause 2h), /resume, /status.
+- Owner commands (sent to Saved Messages): /pause (or /pause 30m, /pause 2h),
+  /resume, /status.
 - A message the model flags as `is_important` gets an immediate push to
   the owner's Saved Messages, in addition to the "band" auto-reply sent
-  to the other person.
+  to the other person. Non-important messages are just answered — nothing
+  is recorded anywhere for later review.
 - Flood protection: auto-replies are capped per chat and globally within
   a rolling 1-hour window (MAX_REPLIES_PER_HOUR_PER_CHAT /
   MAX_REPLIES_PER_HOUR_GLOBAL).
@@ -46,7 +43,6 @@ from telethon.sessions import StringSession
 import db
 import llm
 import transcribe
-import unread_store
 from config import settings
 
 logging.basicConfig(
@@ -189,15 +185,7 @@ async def handle_owner_command(event: events.NewMessage.Event) -> None:
     """Commands the owner sends to themself (Saved Messages) to control the bot."""
     text = (event.raw_text or "").strip()
 
-    if text == "/messages":
-        entries = await db.get_unread_entries()
-        await event.reply(unread_store.format_digest(entries))
-
-    elif text == "/read-all":
-        count = await db.clear_unread_entries()
-        await event.reply(f"{count} ta yozuv o'chirildi.")
-
-    elif text == "/pause":
+    if text == "/pause":
         await db.set_state("paused_until", "inf")
         await event.reply(
             "⏸ Bot butunlay to'xtatildi — hech kimga avtomatik javob bermaydi. "
@@ -229,11 +217,9 @@ async def handle_owner_command(event: events.NewMessage.Event) -> None:
             remaining_min = max(0, int((float(paused_until) - time.time()) / 60))
             status_line = f"⏸ To'xtatilgan — yana {remaining_min} daqiqadan davom etadi."
 
-        unread_count = len(await db.get_unread_entries())
         _prune_old(_global_reply_times)
         await event.reply(
             f"{status_line}\n"
-            f"O'qilmagan yozuvlar: {unread_count} ta.\n"
             f"Bu soatda javoblar: {len(_global_reply_times)}/{settings.max_replies_per_hour_global}."
         )
 
@@ -364,13 +350,6 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
     await db.append_recent_message(chat_id, "assistant", reply_text, settings.short_history_limit)
     await db.update_summary(chat_id, new_summary)
     await db.mark_bot_replied(chat_id)
-
-    await db.add_unread_entry(
-        user_name=user_name,
-        their_message=text or "[rasm]",
-        bot_reply=reply_text,
-        is_important=is_important,
-    )
 
 
 async def main() -> None:

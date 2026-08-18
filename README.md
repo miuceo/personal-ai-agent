@@ -1,82 +1,145 @@
-# Shaxsiy AI Kotib — Telethon Userbot
+# 🤖 Shaxsiy AI Kotib — Telegram Userbot
 
-Bu loyiha Telegram Business obunasi **talab qilmaydi**. Bot alohida "bot hisob"
-sifatida emas, sizning shaxsiy Telegram akkauntingiz nomidan (Telethon
-kutubxonasi orqali) ishlaydi.
+**Telegram Premium ham, Business obunasi ham kerak emas.** Sizning oddiy,
+bepul Telegram akkauntingiz ustida ishlaydigan AI agent — sizga yozganlarga
+sizning nomingizdan, kontekstni tushunib, o'zi javob beradi. Muhim xabarlarni
+esa filtrlab, faqat sizga darhol yetkazadi.
+
+> Bu — [Telethon](https://github.com/LonamiWebs/Telethon) kutubxonasi orqali
+> sizning shaxsiy hisobingizga ulanadigan "userbot". Alohida bot akkaunt
+> yaratilmaydi, Telegram'ning pullik funksiyalariga bog'liq emas.
+
+---
+
+## Nega bu loyiha kerak?
+
+Telegram'da "avtomatik javob berish" funksiyasi rasman faqat **Telegram
+Business** (pullik) obunasida bor, va u ham juda cheklangan: oldindan
+yozilgan shablon xabar, soddagina "away message". U hech qanday
+kontekstni tushunmaydi, xabarni "muhim/muhim emas" deb ajratmaydi, va
+suhbatni davom ettira olmaydi.
+
+Bu loyiha esa **haqiqiy AI agent** sifatida ishlaydi: har bir xabarni
+o'qiydi, avvalgi suhbat xotirasini hisobga oladi, kerak bo'lsa to'liq va
+mustaqil javob yozadi, kerak bo'lmasa — sizni band deb bildirib, sizga
+darhol xabar beradi. Va bularning barchasi **hech qanday pullik Telegram
+tarifisiz** ishlaydi.
+
+## Afzalliklari
+
+| | Telegram Business (Away message) | Bu loyiha |
+|---|---|---|
+| Narxi | Telegram Premium/Business obunasi kerak | **Bepul** (faqat bepul API'lar) |
+| Javob turi | Bir xil shablon matn | AI tomonidan **har safar moslashtirilgan**, tabiiy javob |
+| Kontekstni tushunish | ❌ Yo'q | ✅ Suhbat xotirasi (memory) + oxirgi xabarlar tarixi |
+| Muhimlik darajasini ajratish | ❌ Yo'q | ✅ AI o'zi "muhim / muhim emas" deb baholaydi |
+| Muhim xabar bo'yicha ogohlantirish | ❌ Yo'q | ✅ Saved Messages'ga darhol push-xabar |
+| Rasm va ovozli xabarni tushunish | ❌ Yo'q | ✅ Vision model + Whisper orqali matnga o'giradi |
+| Sizni "ushlab qolish" | ❌ Yo'q | ✅ Siz shaxsan yozsangiz, bot avtomatik jim bo'lib qoladi |
+| Boshqarish | Faqat yoqish/o'chirish | `/pause`, `/pause 30m`, `/resume`, `/status` |
+| Xavfsizlik | — | Havola/fayl ochmaslik, prompt-injection himoyasi, flood-limit |
+
+Qo'shimcha afzalliklar:
+
+- **To'liq maxfiylik** — hech qanday uchinchi tomon serverida ishlamaydi,
+  siz o'zingiz joylab (host qilib) ishga tushirasiz. Faqat siz tanlagan
+  LLM va DB provayderlariga so'rov ketadi.
+- **Ko'p tilli** — suhbatdosh qaysi tilda yozsa (o'zbek, rus, ingliz),
+  bot o'sha tilda javob beradi.
+- **Ovozli xabar va rasmni tushunadi** — Groq Whisper orqali ovozdan
+  matnga, vision-qobiliyatli LLM orqali rasmdagi savolga javob beradi.
+- **Xavfli fayllardan himoya** — APK/EXE/ZIP/hujjat kabi fayllar hech
+  qachon yuklab olinmaydi yoki ochilmaydi; havolalarga amal qilinmaydi.
+- **Flood-himoya** — soatlik javob limiti (chat va global) bor, hisobingiz
+  Telegram tomonidan cheklab qo'yilishidan saqlaydi.
+- **Uzoq muddatli xotira** — har bir suhbat uchun xulosa Postgres'da
+  saqlanadi, 24 soatdan keyin ham yo'qolmaydi.
 
 ## Qanday ishlaydi
 
-1. Kimdir sizga shaxsiy xabar yozadi.
-2. Agar siz o'sha suhbatda oxirgi `OWNER_PAUSE_MINUTES` daqiqa ichida
-   shaxsan javob yozmagan bo'lsangiz — bot avtomatik javob beradi (OpenRouter
-   orqali, xotira xulosasi asosida).
-3. Agar siz o'zingiz yozsangiz — bot o'sha suhbatda vaqtincha jim bo'lib
-   qoladi, keyin avtomatik davom etadi.
-4. O'zingizga ("Saved Messages"ga) `/messages` deb yozsangiz — bot sizga
-   javob berilgan barcha suhbatlarning qisqa xulosasini yuboradi. `/read-all`
-   deb yozsangiz — bu ro'yxat tozalanadi.
-5. Agar kelgan xabar **muhim** deb baholansa (ish taklifi, mijoz, to'lov
-   va h.k.) — suhbatdoshga "band, tez orada javob beradi" deb javob
-   beriladi, siz esa Saved Messages'ga darhol qisqa xabarnoma olasiz
-   (kim yozdi, nima yozdi, suhbatga havola).
-6. O'zingizni boshqarish uchun komandalar (Saved Messages'ga yoziladi):
-   - `/pause` — botni butunlay to'xtatadi (hech kimga javob bermaydi)
-   - `/pause 30m` yoki `/pause 2h` — ma'lum muddatga to'xtatadi
-   - `/resume` — botni qayta ishga tushiradi
-   - `/status` — hozirgi holatni (faolmi/to'xtatilganmi, nechta
-     o'qilmagan yozuv bor, shu soatda nechta javob yuborilgan) ko'rsatadi
+1. Kimdir sizga shaxsiy xabar (matn, rasm yoki ovozli) yozadi.
+2. Bot bir necha soniya kutadi — sizga shaxsan javob berish imkoniyati
+   beriladi (`INITIAL_REPLY_DELAY_SECONDS`).
+3. Siz javob bermasangiz, AI xabarni tahlil qiladi:
+   - **Muhim emas** (salom, tabrik, oddiy savol) → to'liq, mustaqil javob
+     yozadi, xuddi siz yozgandek.
+   - **Muhim** (ish taklifi, mijoz, to'lov, shartnoma va h.k.) → suhbatdoshga
+     "band, tez orada shaxsan javob beraman" deb yozadi, sizga esa Saved
+     Messages'ga darhol qisqa xabarnoma yuboradi (kim, nima yozdi, havola).
+4. Agar siz o'zingiz shu suhbatda yozsangiz — bot avtomatik jim bo'lib
+   qoladi (`OWNER_PAUSE_MINUTES` daqiqa), keyin qayta ishga tushadi.
+5. O'zingizga (Saved Messages) buyruqlar yozib botni boshqarasiz:
+   - `/pause` / `/pause 30m` / `/pause 2h` — vaqtincha yoki butunlay to'xtatish
+   - `/resume` — qayta davom ettirish
+   - `/status` — hozirgi holat, o'qilmagan yozuvlar, shu soatdagi javoblar soni
+
+## Texnologiyalar
+
+- **[Telethon](https://github.com/LonamiWebs/Telethon)** — shaxsiy hisobga
+  ulanish (bot token emas, real user session)
+- **[OpenRouter](https://openrouter.ai)** — LLM chaqiruvlari (bepul
+  qatlamdagi modellar bilan ham ishlaydi)
+- **[Groq](https://groq.com)** — Whisper orqali ovozli xabarlarni matnga
+  o'girish
+- **PostgreSQL** (masalan, [Neon](https://neon.tech) bepul tarifi) —
+  suhbat xotirasi va holatni saqlash
 
 ## O'rnatish
 
 ```bash
-cd telegram-secretary-bot
+git clone <repo-url> secretary-bot
+cd secretary-bot
 pip install -r requirements.txt
 cp .env.example .env
 ```
 
-`.env` faylini oching va quyidagilarni to'ldiring:
+`.env` faylini to'ldiring:
 
-- **API_ID / API_HASH** — https://my.telegram.org/apps saytidan, telefon
-  raqamingiz bilan kirib oling (bepul).
-- **PHONE_NUMBER** — sizning haqiqiy Telegram raqamingiz.
-- **OPENROUTER_API_KEY** — https://openrouter.ai/keys saytidan (bepul
-  qatlam yetarli).
+| O'zgaruvchi | Qayerdan olinadi |
+|---|---|
+| `API_ID`, `API_HASH` | [my.telegram.org/apps](https://my.telegram.org/apps) — telefon raqamingiz bilan kirib olasiz (bepul) |
+| `PHONE_NUMBER` | Sizning haqiqiy Telegram raqamingiz |
+| `OWNER_ID` | Sizning Telegram user ID'ingiz ([@userinfobot](https://t.me/userinfobot)) |
+| `DATABASE_URL` | Neon (yoki boshqa) PostgreSQL ulanish satri (bepul tarif yetarli) |
+| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) (bepul tarif yetarli) |
+| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) (ovozli xabarlar uchun, bepul tarif yetarli) |
 
-## Ishga tushirish
+Birinchi marta sessiya yaratish uchun:
+
+```bash
+python generate_session.py
+```
+
+Telefoningizga kelgan tasdiqlash kodini kiritasiz, chiqqan
+`TELEGRAM_SESSION` qiymatini `.env`ga qo'yasiz. Shundan keyin:
 
 ```bash
 python main.py
 ```
 
-Birinchi marta ishga tushirganda Telegram ilovangizga tasdiqlash kodi
-keladi — shuni terminalga kiritasiz. Shundan keyin sessiya fayl
-(`secretary_session.session`) saqlanadi, keyingi safar kod so'ralmaydi.
+## ⚠️ Muhim eslatmalar
 
-## MUHIM — xavfsizlik va xatarlar
-
-1. **`.env` va `.session` fayllarini hech qachon GitHub'ga yoki boshqa
-   birovga yubormang** — ular orqali sizning Telegram hisobingizga to'liq
-   kirish mumkin bo'ladi.
-2. Bu — Telegram'ning rasmiy Business API'si emas, **userbot** deb
-   ataladi. Telegram'ning foydalanish shartlariga qat'iy zid emas, lekin
-   rasman qo'llab-quvvatlanmaydi. Juda ko'p xabar yuborish yoki shubhali
-   faollik hisobingiz vaqtincha cheklanishiga sabab bo'lishi mumkin —
-   shuning uchun avval **faqat o'zingizning test suhbatlaringizda** sinab
-   ko'ring, keyin ehtiyotkorlik bilan kengaytiring.
-3. Xotira Neon PostgreSQL'da saqlanadi (`DATABASE_URL`) — server qayta
-   ishga tushsa ham yo'qolmaydi. Faqat `.session` (yoki `TELEGRAM_SESSION`)
-   va `.env` maxfiy qoladi, ularni hech qachon commit qilmang.
-4. Flood himoyasi bor (`MAX_REPLIES_PER_HOUR_PER_CHAT` /
-   `MAX_REPLIES_PER_HOUR_GLOBAL`), lekin baribir avval faqat o'zingizning
+1. **`.env` va `.session` fayllarini hech qachon commit qilmang yoki
+   ulashmang** — bular orqali sizning butun Telegram hisobingizga kirish
+   mumkin bo'ladi. `.gitignore`da bular allaqachon istisno qilingan.
+2. Bu — Telegram'ning rasmiy Business API'si emas, **userbot**
+   (Telethon orqali shaxsiy sessiya). Foydalanish shartlariga qat'iy zid
+   emas, lekin rasman qo'llab-quvvatlanmaydi. Avval faqat o'zingizning
    test suhbatlaringizda sinab ko'ring.
+3. Xavfsizlik va flood-limit sozlamalari (`MAX_REPLIES_PER_HOUR_*`,
+   `OWNER_PAUSE_MINUTES`, `INITIAL_REPLY_DELAY_SECONDS`) `.env` orqali
+   moslashtiriladi — ehtiyotkorlik bilan sinab ko'rib, keyin kengaytiring.
 
-## Keyingi qadamlar (kengaytirish uchun)
+## Kengaytirish g'oyalari
 
-- Doimiy serverga (masalan, Google Cloud e2-micro bepul tarif) joylab,
-  `systemd` service sifatida ishga tushirish — jarayon o'lib qolsa avtomatik
-  qayta ko'tarilishi uchun
-- Bir nechta mijoz uchun bir xil kodni har biriga alohida `.env` bilan
-  ishga tushirish (har biriga alohida API_ID/API_HASH kerak — chunki har
-  biri o'z shaxsiy hisobidan ishlaydi)
-- Kalendar integratsiyasi va tool-calling (haqiqiy harakat qila oladigan
-  agent uchun)
+- Doimiy serverga (masalan, bepul VPS/VM) joylab, `systemd` orqali
+  avtomatik qayta ishga tushishini ta'minlash
+- Bir nechta odam uchun har biriga alohida `.env` va alohida
+  API_ID/API_HASH bilan ishga tushirish (har biri o'z hisobidan ishlaydi)
+- Kalendar integratsiyasi va tool-calling — real harakat qila oladigan
+  (masalan, uchrashuv belgilash) to'liq agent darajasiga chiqarish
+
+## Litsenziya
+
+Ochiq kodli — istagancha fork qiling, o'zgartiring, o'zingizning
+ehtiyojingizga moslang.
