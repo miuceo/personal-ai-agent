@@ -1,3 +1,4 @@
+                                                                                                                                                                                                                                                                                                                                                                                                                     main.py                                                                                                                                                                                                                                                                                                                                                                                                                                               
 """
 main.py
 
@@ -39,7 +40,7 @@ client = TelegramClient(
     StringSession(settings.telegram_session), settings.api_id, settings.api_hash
 )
 
-INITIAL_REPLY_DELAY_SECONDS = 60  # "1 daqiqa kutish"
+INITIAL_REPLY_DELAY_SECONDS = settings.initial_reply_delay_seconds  # "kutish"
 
 # Message IDs the bot itself just sent, so the outgoing-message handler
 # doesn't mistake the bot's own reply for a manual reply typed by the owner.
@@ -166,3 +167,6 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+
