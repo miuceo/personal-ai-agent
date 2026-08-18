@@ -64,6 +64,18 @@ async def init_db() -> None:
             )
             """
         )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS unread_entries (
+                id SERIAL PRIMARY KEY,
+                user_name TEXT,
+                their_message TEXT,
+                bot_reply TEXT,
+                is_important BOOLEAN NOT NULL DEFAULT false,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
 
 
 def _pool_or_raise() -> asyncpg.Pool:
@@ -179,3 +191,36 @@ async def delete_chat_memory(chat_id: int) -> None:
     """Wipe memory for a single chat — e.g. if the owner wants to 'forget' someone."""
     pool = _pool_or_raise()
     await pool.execute("DELETE FROM chats WHERE chat_id = $1", chat_id)
+
+
+async def add_unread_entry(
+    user_name: str, their_message: str, bot_reply: str, is_important: bool
+) -> None:
+    """Records a reply the bot sent on the owner's behalf, for the /messages digest."""
+    pool = _pool_or_raise()
+    await pool.execute(
+        """
+        INSERT INTO unread_entries (user_name, their_message, bot_reply, is_important)
+        VALUES ($1, $2, $3, $4)
+        """,
+        user_name,
+        their_message,
+        bot_reply,
+        is_important,
+    )
+
+
+async def get_unread_entries() -> list[dict[str, Any]]:
+    pool = _pool_or_raise()
+    rows = await pool.fetch(
+        "SELECT user_name, their_message, bot_reply, is_important FROM unread_entries ORDER BY created_at"
+    )
+    return [dict(row) for row in rows]
+
+
+async def clear_unread_entries() -> int:
+    """Deletes all unread entries, returns how many were removed."""
+    pool = _pool_or_raise()
+    result = await pool.execute("DELETE FROM unread_entries")
+    # asyncpg returns e.g. "DELETE 3"
+    return int(result.split()[-1])

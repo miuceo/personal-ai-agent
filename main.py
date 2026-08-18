@@ -6,15 +6,16 @@ Telethon-based personal secretary userbot. Logs into YOUR OWN account
 needed, no separate bot account.
 
 Behavior:
-- New incoming message in a private chat -> the bot waits 1 minute before
-  doing anything, giving the owner a chance to jump in and reply personally
-  first. If the owner hasn't replied by then, the bot answers.
+- New incoming message in a private chat -> the bot waits
+  INITIAL_REPLY_DELAY_SECONDS before doing anything, giving the owner a
+  chance to jump in and reply personally first. If the owner hasn't
+  replied by then, the bot answers.
 - If the owner personally replies in a chat, the bot goes silent there for
   OWNER_PAUSE_MINUTES, then automatically resumes.
 - If more than 24h pass since the last message in a chat, the short-term
   "live" context resets (but the long-term memory summary is kept).
-- Every reply the bot sends on the owner's behalf is appended to a local
-  unread-digest file. Only the owner (OWNER_ID) can retrieve it with
+- Every reply the bot sends on the owner's behalf is recorded as an unread
+  digest entry in Postgres. Only the owner (OWNER_ID) can retrieve it with
   /messages (sent to their own Saved Messages chat), or clear it with
   /read-all.
 - Only text, photo, and voice messages are processed. Any other file type
@@ -105,11 +106,11 @@ async def handle_owner_command(event: events.NewMessage.Event) -> None:
     text = (event.raw_text or "").strip()
 
     if text == "/messages":
-        entries = await asyncio.to_thread(unread_store.get_all)
+        entries = await db.get_unread_entries()
         await event.reply(unread_store.format_digest(entries))
 
     elif text == "/read-all":
-        count = await asyncio.to_thread(unread_store.clear)
+        count = await db.clear_unread_entries()
         await event.reply(f"{count} ta yozuv o'chirildi.")
 
 
@@ -146,7 +147,7 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
 
     LAST_INCOMING_ID[chat_id] = message_id
 
-    # "1 daqiqa kutish" — give the owner a window to reply personally first.
+    # Give the owner a window to reply personally first.
     if not await db.owner_recently_active(chat_id, settings.owner_pause_minutes):
         await asyncio.sleep(INITIAL_REPLY_DELAY_SECONDS)
 
@@ -203,8 +204,7 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
     await db.update_summary(chat_id, new_summary)
     await db.mark_bot_replied(chat_id)
 
-    await asyncio.to_thread(
-        unread_store.append,
+    await db.add_unread_entry(
         user_name=user_name,
         their_message=text or "[rasm]",
         bot_reply=reply_text,

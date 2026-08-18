@@ -12,8 +12,9 @@ kutubxonasi orqali) ishlaydi.
    orqali, xotira xulosasi asosida).
 3. Agar siz o'zingiz yozsangiz — bot o'sha suhbatda vaqtincha jim bo'lib
    qoladi, keyin avtomatik davom etadi.
-4. O'zingizga ("Saved Messages"ga) `/hisobot` deb yozsangiz — bot sizga
-   javob berilgan barcha suhbatlarning qisqa xulosasini yuboradi.
+4. O'zingizga ("Saved Messages"ga) `/messages` deb yozsangiz — bot sizga
+   javob berilgan barcha suhbatlarning qisqa xulosasini yuboradi. `/read-all`
+   deb yozsangiz — bu ro'yxat tozalanadi.
 
 ## O'rnatish
 
