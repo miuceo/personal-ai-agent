@@ -76,6 +76,14 @@ async def init_db() -> None:
             )
             """
         )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_state (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+            """
+        )
 
 
 def _pool_or_raise() -> asyncpg.Pool:
@@ -224,3 +232,26 @@ async def clear_unread_entries() -> int:
     result = await pool.execute("DELETE FROM unread_entries")
     # asyncpg returns e.g. "DELETE 3"
     return int(result.split()[-1])
+
+
+async def get_state(key: str) -> Optional[str]:
+    pool = _pool_or_raise()
+    row = await pool.fetchrow("SELECT value FROM bot_state WHERE key = $1", key)
+    return row["value"] if row else None
+
+
+async def set_state(key: str, value: str) -> None:
+    pool = _pool_or_raise()
+    await pool.execute(
+        """
+        INSERT INTO bot_state (key, value) VALUES ($1, $2)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """,
+        key,
+        value,
+    )
+
+
+async def delete_state(key: str) -> None:
+    pool = _pool_or_raise()
+    await pool.execute("DELETE FROM bot_state WHERE key = $1", key)
