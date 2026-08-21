@@ -7,7 +7,7 @@ os.environ directly. Fails fast and clearly if something required is missing.
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
@@ -21,6 +21,12 @@ def _require(name: str) -> str:
     return value
 
 
+def _split_models(name: str, default: str) -> list[str]:
+    """Comma-separated env var -> ordered list of model IDs (fallback chain)."""
+    raw = os.environ.get(name, default)
+    return [m.strip() for m in raw.split(",") if m.strip()]
+
+
 @dataclass(frozen=True)
 class Settings:
     api_id: int
@@ -31,22 +37,29 @@ class Settings:
 
     database_url: str
 
-    openrouter_api_key: str
-    openrouter_model: str
-    openrouter_fallback_model: str
-
+    # --- Text generation (Groq primary, OpenRouter as last-resort fallback) ---
     groq_api_key: str
-    groq_stt_model: str
 
-    owner_pause_minutes: int
-    short_history_limit: int
-    initial_reply_delay_seconds: int
+    # --- Vision / image understanding (OpenRouter only) ---
+    openrouter_api_key: str
+
+    groq_text_models: list[str] = field(default_factory=list)
+    openrouter_text_fallback_model: str = ""
+    openrouter_vision_models: list[str] = field(default_factory=list)
+
+    # --- Speech-to-text (Groq Whisper, tuned for Uzbek) ---
+    groq_stt_models: list[str] = field(default_factory=list)
+    stt_language: str = "uz"
+
+    owner_pause_minutes: int = 10
+    short_history_limit: int = 6
+    initial_reply_delay_seconds: int = 10
 
     # Flood protection: caps how many auto-replies the bot sends within a
     # rolling 1-hour window, so a stuck loop or a burst of messages can't
     # get the account flagged by Telegram.
-    max_replies_per_hour_per_chat: int
-    max_replies_per_hour_global: int
+    max_replies_per_hour_per_chat: int = 20
+    max_replies_per_hour_global: int = 60
 
 
 settings = Settings(
@@ -58,13 +71,32 @@ settings = Settings(
     # doesn't have one yet) — after that, this should always be set.
     telegram_session=os.environ.get("TELEGRAM_SESSION", ""),
     database_url=_require("DATABASE_URL"),
-    openrouter_api_key=_require("OPENROUTER_API_KEY"),
-    openrouter_model=os.environ.get("OPENROUTER_MODEL", "google/gemma-4-26b-a4b-it:free"),
-    openrouter_fallback_model=os.environ.get(
-        "OPENROUTER_FALLBACK_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free"
-    ),
     groq_api_key=_require("GROQ_API_KEY"),
-    groq_stt_model=os.environ.get("GROQ_STT_MODEL", "whisper-large-v3-turbo"),
+    # Ordered fallback chain: tries each in order until one succeeds.
+    # gpt-oss-120b = quality, gpt-oss-20b = speed/backup (llama-3.3-70b-versatile
+    # was retired by Groq on 2026-08-16 — do not use it anymore).
+    groq_text_models=_split_models(
+        "GROQ_TEXT_MODELS", "openai/gpt-oss-120b,openai/gpt-oss-20b"
+    ),
+    openrouter_api_key=_require("OPENROUTER_API_KEY"),
+    # Last-resort text fallback if BOTH Groq models are down/rate-limited.
+    openrouter_text_fallback_model=os.environ.get(
+        "OPENROUTER_TEXT_FALLBACK_MODEL", "z-ai/glm-5.2:free"
+    ),
+    # Vision chain: two named free vision models, then openrouter/free — an
+    # auto-router that picks whatever free model currently supports images,
+    # so this last step keeps working even if a specific model ID gets
+    # delisted (free model catalog rotates often).
+    openrouter_vision_models=_split_models(
+        "OPENROUTER_VISION_MODELS",
+        "google/gemma-4-31b-it:free,"
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,"
+        "openrouter/free",
+    ),
+    groq_stt_models=_split_models(
+        "GROQ_STT_MODELS", "whisper-large-v3-turbo,whisper-large-v3"
+    ),
+    stt_language=os.environ.get("STT_LANGUAGE", "uz"),
     owner_pause_minutes=int(os.environ.get("OWNER_PAUSE_MINUTES", 10)),
     short_history_limit=int(os.environ.get("SHORT_HISTORY_LIMIT", 6)),
     initial_reply_delay_seconds=int(os.environ.get("INITIAL_REPLY_DELAY_SECONDS", 10)),

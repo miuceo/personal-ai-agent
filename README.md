@@ -77,12 +77,34 @@ Qo'shimcha afzalliklar:
 
 - **[Telethon](https://github.com/LonamiWebs/Telethon)** — shaxsiy hisobga
   ulanish (bot token emas, real user session)
-- **[OpenRouter](https://openrouter.ai)** — LLM chaqiruvlari (bepul
-  qatlamdagi modellar bilan ham ishlaydi)
-- **[Groq](https://groq.com)** — Whisper orqali ovozli xabarlarni matnga
-  o'girish
+- **[Groq](https://groq.com)** — matnli javoblar (`openai/gpt-oss-120b` /
+  `gpt-oss-20b`) va ovozli xabarlarni matnga o'girish (Whisper, o'zbek
+  tiliga moslangan)
+- **[OpenRouter](https://openrouter.ai)** — faqat rasm (vision)
+  tushunish uchun — Groq'ning bepul chat modellari rasm qabul qilmaydi
 - **PostgreSQL** (masalan, [Neon](https://neon.tech) bepul tarifi) —
   suhbat xotirasi va holatni saqlash
+
+### Hech qachon "yiqilib qolmaslik" strategiyasi
+
+Har bir LLM chaqiruvi **zanjir** shaklida ishlaydi — bitta provayder
+yiqilsa yoki bepul limitga urilsa, kod avtomatik keyingisiga o'tadi:
+
+| Vazifa | Zanjir tartibi |
+|---|---|
+| Matnli javob | Groq `gpt-oss-120b` → Groq `gpt-oss-20b` → OpenRouter `z-ai/glm-5.2:free` |
+| Ovozli xabar (STT) | Groq `whisper-large-v3-turbo` (uz) → Groq `whisper-large-v3` (uz) |
+| Rasm tushunish (vision) | OpenRouter `gemma-4-31b-it:free` → `nemotron-3-nano-omni:free` → `openrouter/free` (avtomatik router) |
+
+Agar **zanjirdagi hamma provayder bir vaqtda** ishlamay qolsa (juda kam
+uchraydigan holat), bot baribir jim qolmaydi: standart "band, tez orada
+javob beraman" xabari yuboriladi va bu holat avtomatik "muhim" deb
+belgilanadi — ya'ni sizga (Saved Messages'ga) darhol xabarnoma boradi,
+chunki AI tushunolmagan xabarni odam ko'rib chiqishi kerak.
+
+Zanjirlar `.env` orqali sozlanadi (`GROQ_TEXT_MODELS`,
+`OPENROUTER_VISION_MODELS` va h.k.) — vergul bilan ajratilgan model
+ro'yxati, tartib muhim.
 
 ## O'rnatish
 
@@ -101,8 +123,14 @@ cp .env.example .env
 | `PHONE_NUMBER` | Sizning haqiqiy Telegram raqamingiz |
 | `OWNER_ID` | Sizning Telegram user ID'ingiz ([@userinfobot](https://t.me/userinfobot)) |
 | `DATABASE_URL` | Neon (yoki boshqa) PostgreSQL ulanish satri (bepul tarif yetarli) |
-| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) (bepul tarif yetarli) |
-| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) (ovozli xabarlar uchun, bepul tarif yetarli) |
+| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) — matnli javoblar va ovozli xabarlar uchun (bepul tarif yetarli) |
+| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) — faqat rasm (vision) tushunish uchun (bepul tarif yetarli) |
+
+Model zanjirlari (`GROQ_TEXT_MODELS`, `GROQ_STT_MODELS`,
+`OPENROUTER_VISION_MODELS`, `OPENROUTER_TEXT_FALLBACK_MODEL`) uchun
+`.env.example`dagi standart qiymatlar yetarli — o'zgartirish shart emas,
+lekin bepul model ro'yxatlari vaqti-vaqti bilan yangilanadi, shuning uchun
+ishlamay qolsa avval shu qiymatlarni tekshiring.
 
 Birinchi marta sessiya yaratish uchun:
 
