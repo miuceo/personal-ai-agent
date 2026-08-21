@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icon.jpg" width="120" alt="Shaxsiy AI Kotib logotipi" />
+</p>
+
 # 🤖 Shaxsiy AI Kotib — Telegram Userbot
 
 **Telegram Premium ham, Business obunasi ham kerak emas.** Sizning oddiy,
