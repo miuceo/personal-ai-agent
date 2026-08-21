@@ -1,9 +1,12 @@
 # 🤖 Shaxsiy AI Kotib — Telegram Userbot
 
 **Telegram Premium ham, Business obunasi ham kerak emas.** Sizning oddiy,
-bepul Telegram akkauntingiz ustida ishlaydigan AI agent — sizga yozganlarga
-sizning nomingizdan, kontekstni tushunib, o'zi javob beradi. Muhim xabarlarni
-esa filtrlab, faqat sizga darhol yetkazadi.
+bepul Telegram akkauntingiz ustida ishlaydigan AI agent — sizga yozgan
+odamlarga sizning **AI kotibingiz** sifatida, kontekstni tushunib javob
+beradi (sizning o'zingiz emas — u buni hech qachon yashirmaydi). Muhim
+xabarlarni filtrlab, faqat sizga darhol yetkazadi; sizga aloqasi yo'q
+so'rovlarni (umumiy chatbot sifatida ishlatishga urinishlarni) esa rad
+etadi.
 
 > Bu — [Telethon](https://github.com/LonamiWebs/Telethon) kutubxonasi orqali
 > sizning shaxsiy hisobingizga ulanadigan "userbot". Alohida bot akkaunt
@@ -20,9 +23,13 @@ kontekstni tushunmaydi, xabarni "muhim/muhim emas" deb ajratmaydi, va
 suhbatni davom ettira olmaydi.
 
 Bu loyiha esa **haqiqiy AI agent** sifatida ishlaydi: har bir xabarni
-o'qiydi, avvalgi suhbat xotirasini hisobga oladi, kerak bo'lsa to'liq va
-mustaqil javob yozadi, kerak bo'lmasa — sizni band deb bildirib, sizga
-darhol xabar beradi. Va bularning barchasi **hech qanday pullik Telegram
+o'qiydi, avvalgi suhbat xotirasini hisobga oladi, va uch xil qarorni
+mustaqil qabul qiladi — oddiy narsaga o'zi javob beradi, jiddiy narsani
+sizga qoldirib qo'yadi, sizga aloqasi yo'q narsani esa (kod yozish, umumiy
+bilim savoli va h.k.) butunlay rad etadi. Bot hech qachon sizning
+nomingizdan, siz o'zingiz yozayotgandek gapirmaydi — u har doim o'zini
+sizning AI kotibingiz sifatida ochiq tanishtiradi va siz haqingizda
+3-shaxsda so'zlaydi. Va bularning barchasi **hech qanday pullik Telegram
 tarifisiz** ishlaydi.
 
 ## Afzalliklari
@@ -32,7 +39,7 @@ tarifisiz** ishlaydi.
 | Narxi | Telegram Premium/Business obunasi kerak | **Bepul** (faqat bepul API'lar) |
 | Javob turi | Bir xil shablon matn | AI tomonidan **har safar moslashtirilgan**, tabiiy javob |
 | Kontekstni tushunish | ❌ Yo'q | ✅ Suhbat xotirasi (memory) + oxirgi xabarlar tarixi |
-| Muhimlik darajasini ajratish | ❌ Yo'q | ✅ AI o'zi "muhim / muhim emas" deb baholaydi |
+| Muhimlik darajasini ajratish | ❌ Yo'q | ✅ AI o'zi muhim / oddiy / doiradan tashqari deb 3 toifaga ajratadi |
 | Muhim xabar bo'yicha ogohlantirish | ❌ Yo'q | ✅ Saved Messages'ga darhol push-xabar |
 | Rasm va ovozli xabarni tushunish | ❌ Yo'q | ✅ Vision model + Whisper orqali matnga o'giradi |
 | Sizni "ushlab qolish" | ❌ Yo'q | ✅ Siz shaxsan yozsangiz, bot avtomatik jim bo'lib qoladi |
@@ -49,7 +56,11 @@ Qo'shimcha afzalliklar:
 - **Ovozli xabar va rasmni tushunadi** — Groq Whisper orqali ovozdan
   matnga, vision-qobiliyatli LLM orqali rasmdagi savolga javob beradi.
 - **Xavfli fayllardan himoya** — APK/EXE/ZIP/hujjat kabi fayllar hech
-  qachon yuklab olinmaydi yoki ochilmaydi; havolalarga amal qilinmaydi.
+  qachon yuklab olinmaydi yoki ochilmaydi (o'rniga aniq rad javobi
+  qaytariladi); havolalarga amal qilinmaydi.
+- **Faqat kotib vazifasi bilan cheklangan** — bot umumiy ChatGPT sifatida
+  ishlatilishga (kod yozish, umumiy bilim savollari, "rol o'ynash"
+  urinishlari) qat'iy rad javobi beradi.
 - **Flood-himoya** — soatlik javob limiti (chat va global) bor, hisobingiz
   Telegram tomonidan cheklab qo'yilishidan saqlaydi.
 - **Uzoq muddatli xotira** — har bir suhbat uchun xulosa Postgres'da
@@ -92,8 +103,10 @@ Qo'shimcha afzalliklar:
 - **[Groq](https://groq.com)** — matnli javoblar (`openai/gpt-oss-120b` /
   `gpt-oss-20b`) va ovozli xabarlarni matnga o'girish (Whisper, o'zbek
   tiliga moslangan)
-- **[OpenRouter](https://openrouter.ai)** — faqat rasm (vision)
-  tushunish uchun — Groq'ning bepul chat modellari rasm qabul qilmaydi
+- **[OpenRouter](https://openrouter.ai)** — rasm (vision) tushunish uchun
+  asosiy (Groq'ning bepul chat modellari rasm qabul qilmaydi), matnli
+  javoblar uchun esa faqat Groq butunlay ishlamay qolganda oxirgi zaxira
+  sifatida
 - **PostgreSQL** (masalan, [Neon](https://neon.tech) bepul tarifi) —
   suhbat xotirasi va holatni saqlash
 
@@ -105,14 +118,22 @@ yiqilsa yoki bepul limitga urilsa, kod avtomatik keyingisiga o'tadi:
 | Vazifa | Zanjir tartibi |
 |---|---|
 | Matnli javob | Groq `gpt-oss-120b` → Groq `gpt-oss-20b` → OpenRouter `z-ai/glm-5.2:free` |
-| Ovozli xabar (STT) | Groq `whisper-large-v3-turbo` (uz) → Groq `whisper-large-v3` (uz) |
+| Ovozli xabar (STT) | Groq `whisper-large-v3` (uz) → Groq `whisper-large-v3-turbo` (uz) |
 | Rasm tushunish (vision) | OpenRouter `gemma-4-31b-it:free` → `nemotron-3-nano-omni:free` → `openrouter/free` (avtomatik router) |
 
+STT zanjirida `whisper-large-v3` birinchi turadi — u kam resursli tillar
+(jumladan o'zbek) uchun `-turbo` variantidan aniqroq; `-turbo` faqat
+`large-v3` o'zi ishlamay qolganda zaxira sifatida ishlatiladi. Bundan
+tashqari har bir ovozli xabar Whisper'ga qisqa o'zbekcha kontekst
+(`prompt`) bilan yuboriladi va `temperature=0` bilan so'zma-so'z
+transkripsiya qilinadi — bu ayniqsa qisqa/tez nutqda aniqlikni oshiradi.
+
 Agar **zanjirdagi hamma provayder bir vaqtda** ishlamay qolsa (juda kam
-uchraydigan holat), bot baribir jim qolmaydi: standart "band, tez orada
-javob beraman" xabari yuboriladi va bu holat avtomatik "muhim" deb
-belgilanadi — ya'ni sizga (Saved Messages'ga) darhol xabarnoma boradi,
-chunki AI tushunolmagan xabarni odam ko'rib chiqishi kerak.
+uchraydigan holat), bot baribir jim qolmaydi: kotib nomidan, 3-shaxsda
+("xabaringizni yetkazib qo'yaman" kabi) tayyor javob yuboriladi va bu
+holat avtomatik "muhim" deb belgilanadi — ya'ni sizga (Saved Messages'ga)
+darhol xabarnoma boradi, chunki AI tushunolmagan xabarni odam ko'rib
+chiqishi kerak.
 
 Zanjirlar `.env` orqali sozlanadi (`GROQ_TEXT_MODELS`,
 `OPENROUTER_VISION_MODELS` va h.k.) — vergul bilan ajratilgan model
@@ -135,8 +156,14 @@ cp .env.example .env
 | `PHONE_NUMBER` | Sizning haqiqiy Telegram raqamingiz |
 | `OWNER_ID` | Sizning Telegram user ID'ingiz ([@userinfobot](https://t.me/userinfobot)) |
 | `DATABASE_URL` | Neon (yoki boshqa) PostgreSQL ulanish satri (bepul tarif yetarli) |
+| `OWNER_NAME` | Ismingiz — bot javoblarida siz haqingizda shu nomdan foydalanadi (3-shaxsda) |
+| `OWNER_BIO` | Bir qatorlik tavsif (kasbingiz va h.k.) — "u nima ish qiladi" kabi savollarga shu asosda javob beradi |
 | `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) — matnli javoblar va ovozli xabarlar uchun (bepul tarif yetarli) |
-| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) — faqat rasm (vision) tushunish uchun (bepul tarif yetarli) |
+| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) — rasm (vision) tushunish va matnli zaxira uchun (bepul tarif yetarli) |
+
+`OWNER_NAME` va `OWNER_BIO` — majburiy: bular bo'lmasa bot ishga
+tushmaydi (`config.py` xatolik bilan to'xtaydi). Bot token **kerak
+emas** — bu userbot, BotFather orqali alohida bot yaratilmaydi.
 
 Model zanjirlari (`GROQ_TEXT_MODELS`, `GROQ_STT_MODELS`,
 `OPENROUTER_VISION_MODELS`, `OPENROUTER_TEXT_FALLBACK_MODEL`) uchun
