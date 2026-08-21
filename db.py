@@ -34,10 +34,19 @@ _pool: Optional[asyncpg.Pool] = None
 
 # Every memory update is a read-modify-write of one JSON blob, so two
 # concurrent handlers touching the same chat would clobber each other.
-# One lock per chat serializes them.
+# One lock per chat serializes them. Never pruned as chats come and go, so
+# callers should periodically drop_idle_locks() for chats gone quiet —
+# otherwise this dict grows for as long as the process runs.
 _chat_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 RECENT_CONTEXT_TTL_SECONDS = 24 * 60 * 60
+
+# The prompt asks the model to keep memory_summary under ~400 words, but
+# nothing enforces that on the model's side — left unchecked it drifts
+# longer every turn (and gets re-sent to the LLM on every single message,
+# so an unbounded summary means slowly growing latency/cost). Truncated
+# here so every write path gets the cap regardless of caller.
+MAX_SUMMARY_CHARS = 3000
 
 EMPTY_MEMORY = {
     "summary": "",
@@ -139,20 +148,40 @@ async def save_memory(chat_id: int, memory: dict[str, Any]) -> None:
     )
 
 
-async def append_recent_message(chat_id: int, role: str, text: str, limit: int) -> None:
+def _append_message(memory: dict[str, Any], role: str, text: str, limit: int) -> None:
+    """Mutates `memory` in place: applies the 24h rule, appends the message,
+    trims to `limit`. Shared by the read-modify-write helpers below so the
+    24h-reset logic lives in exactly one place."""
+    last_at = memory.get("last_message_at")
+    if last_at and (time.time() - last_at) > RECENT_CONTEXT_TTL_SECONDS:
+        memory["recent_messages"] = []
+
+    memory["recent_messages"].append({"role": role, "text": text, "ts": time.time()})
+    memory["recent_messages"] = memory["recent_messages"][-max(limit, 1) :]
+    memory["last_message_at"] = time.time()
+
+
+async def append_recent_message(chat_id: int, role: str, text: str, limit: int) -> dict[str, Any]:
+    """Appends one message and returns the resulting memory, so callers that
+    need the memory right after (e.g. to build the LLM prompt) don't have to
+    issue a separate get_memory() read-trip."""
     async with _chat_locks[chat_id]:
         memory = await get_memory(chat_id)
+        _append_message(memory, role, text, limit)
+        await save_memory(chat_id, memory)
+        return memory
 
-        # 24-hour rule: if the gap since the last message is too long, this is
-        # treated as a fresh short-term conversation — but the long-term summary
-        # is intentionally NOT touched.
-        last_at = memory.get("last_message_at")
-        if last_at and (time.time() - last_at) > RECENT_CONTEXT_TTL_SECONDS:
-            memory["recent_messages"] = []
 
-        memory["recent_messages"].append({"role": role, "text": text, "ts": time.time()})
-        memory["recent_messages"] = memory["recent_messages"][-max(limit, 1) :]
-        memory["last_message_at"] = time.time()
+async def record_bot_reply(chat_id: int, reply_text: str, new_summary: str, limit: int) -> None:
+    """Single read-modify-write for everything that changes once the bot has
+    sent its reply: appends the assistant turn, updates the summary (capped
+    at MAX_SUMMARY_CHARS), and marks last_bot_reply_at — replacing what used
+    to be three separate read+write round-trips."""
+    async with _chat_locks[chat_id]:
+        memory = await get_memory(chat_id)
+        _append_message(memory, "assistant", reply_text, limit)
+        memory["summary"] = (new_summary or memory["summary"])[:MAX_SUMMARY_CHARS]
+        memory["last_bot_reply_at"] = time.time()
         await save_memory(chat_id, memory)
 
 
@@ -164,7 +193,7 @@ async def _set_field(chat_id: int, key: str, value: Any) -> None:
 
 
 async def update_summary(chat_id: int, new_summary: str) -> None:
-    await _set_field(chat_id, "summary", new_summary)
+    await _set_field(chat_id, "summary", new_summary[:MAX_SUMMARY_CHARS])
 
 
 async def mark_owner_replied(chat_id: int) -> None:
@@ -175,12 +204,30 @@ async def mark_bot_replied(chat_id: int) -> None:
     await _set_field(chat_id, "last_bot_reply_at", time.time())
 
 
-async def owner_recently_active(chat_id: int, pause_minutes: int) -> bool:
-    memory = await get_memory(chat_id)
+def owner_active_in(memory: dict[str, Any], pause_minutes: int) -> bool:
+    """Pure version of owner_recently_active() that works off an
+    already-loaded memory dict, so a caller that already has `memory` in
+    hand (e.g. from append_recent_message's return value) doesn't need a
+    second DB read just to answer this question."""
     last = memory.get("last_owner_reply_at")
     if not last:
         return False
     return (time.time() - last) / 60 < pause_minutes
+
+
+async def owner_recently_active(chat_id: int, pause_minutes: int) -> bool:
+    return owner_active_in(await get_memory(chat_id), pause_minutes)
+
+
+def drop_idle_locks(chat_ids: list[int]) -> None:
+    """Periodic-cleanup hook: drops per-chat locks for chats that have gone
+    quiet, so _chat_locks doesn't grow forever over a months-long process
+    lifetime. Only drops a lock that isn't currently held — never removes
+    one mid-use."""
+    for chat_id in chat_ids:
+        lock = _chat_locks.get(chat_id)
+        if lock is not None and not lock.locked():
+            _chat_locks.pop(chat_id, None)
 
 
 async def delete_chat_memory(chat_id: int) -> None:
