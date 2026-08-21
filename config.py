@@ -37,6 +37,10 @@ class Settings:
 
     database_url: str
 
+    # --- Identity injected into the LLM system prompt (see llm.py) ---
+    owner_name: str
+    owner_bio: str
+
     # --- Text generation (Groq primary, OpenRouter as last-resort fallback) ---
     groq_api_key: str
 
@@ -71,6 +75,8 @@ settings = Settings(
     # doesn't have one yet) — after that, this should always be set.
     telegram_session=os.environ.get("TELEGRAM_SESSION", ""),
     database_url=_require("DATABASE_URL"),
+    owner_name=_require("OWNER_NAME"),
+    owner_bio=_require("OWNER_BIO"),
     groq_api_key=_require("GROQ_API_KEY"),
     # Ordered fallback chain: tries each in order until one succeeds.
     # gpt-oss-120b = quality, gpt-oss-20b = speed/backup (llama-3.3-70b-versatile

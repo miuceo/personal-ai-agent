@@ -7,8 +7,10 @@ ishlaydi (bot token emas, real user session). Shaxsiy chatlarga kelgan
 xabarlarga AI orqali avtomatik javob beradi, muhim xabarlarni filtrlab
 egasiga Saved Messages orqali xabar qiladi.
 
-Egasi: **Muhammadjon Ibrohimov**. Bot javoblari va foydalanuvchiga
-ko'rinadigan barcha matnlar **o'zbek tilida**.
+Egasi kim ekani `OWNER_NAME` / `OWNER_BIO` (`.env`) orqali sozlanadi va
+`llm.py`dagi `SYSTEM_PROMPT`ga `string.Template` bilan quyiladi (kodda
+qattiq yozilmagan — loyiha public bo'lgani uchun). Bot javoblari va
+foydalanuvchiga ko'rinadigan barcha matnlar **o'zbek tilida**.
 
 ## Fayl tuzilishi
 
