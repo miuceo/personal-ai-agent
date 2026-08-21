@@ -54,6 +54,7 @@ class Settings:
     # --- Speech-to-text (Groq Whisper, tuned for Uzbek) ---
     groq_stt_models: list[str] = field(default_factory=list)
     stt_language: str = "uz"
+    stt_prompt: str = ""
 
     owner_pause_minutes: int = 10
     short_history_limit: int = 6
@@ -99,13 +100,23 @@ settings = Settings(
         "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,"
         "openrouter/free",
     ),
+    # whisper-large-v3 first: it's measurably more accurate than the
+    # distilled -turbo variant on lower-resource languages like Uzbek,
+    # which matters more here than turbo's speed edge. -turbo is the
+    # fallback, used only if large-v3 itself errors out — a "succeeded but
+    # transcribed badly" result isn't detectable as a failure, so ordering
+    # by accuracy (not just availability) is what actually fixes quality.
     groq_stt_models=_split_models(
-        "GROQ_STT_MODELS", "whisper-large-v3-turbo,whisper-large-v3"
+        "GROQ_STT_MODELS", "whisper-large-v3,whisper-large-v3-turbo"
     ),
     stt_language=os.environ.get("STT_LANGUAGE", "uz"),
+    # Optional Whisper "prompt" hint (see transcribe.py) — free text that
+    # primes vocabulary/spelling/style. Defaults to one built from
+    # OWNER_NAME/OWNER_BIO if left unset.
+    stt_prompt=os.environ.get("STT_PROMPT", ""),
     owner_pause_minutes=int(os.environ.get("OWNER_PAUSE_MINUTES", 10)),
     short_history_limit=int(os.environ.get("SHORT_HISTORY_LIMIT", 6)),
-    initial_reply_delay_seconds=int(os.environ.get("INITIAL_REPLY_DELAY_SECONDS", 10)),
-    max_replies_per_hour_per_chat=int(os.environ.get("MAX_REPLIES_PER_HOUR_PER_CHAT", 20)),
+    initial_reply_delay_seconds=int(os.environ.get("INITIAL_REPLY_DELAY_SECONDS", 5)),
+    max_replies_per_hour_per_chat=int(os.environ.get("MAX_REPLIES_PER_HOUR_PER_CHAT", 30)),
     max_replies_per_hour_global=int(os.environ.get("MAX_REPLIES_PER_HOUR_GLOBAL", 60)),
 )
