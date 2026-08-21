@@ -62,6 +62,18 @@ INITIAL_REPLY_DELAY_SECONDS = settings.initial_reply_delay_seconds  # "kutish"
 # Telegram hard-caps a single message at 4096 characters.
 MAX_REPLY_CHARS = 4000
 
+# Sent immediately (no AI, no initial-reply delay) for any incoming file
+# that isn't a Telegram photo or voice note — documents, videos, stickers,
+# APK/EXE/ZIP, a PNG sent as a file instead of a compressed photo, etc.
+# Nothing outside photo/voice is ever downloaded or opened; this makes that
+# explicit to the sender instead of leaving them wondering why the bot went
+# silent.
+UNSUPPORTED_MEDIA_REPLY = (
+    "Kechirasiz, bu turdagi faylni ocholmayman — menda bunga ruxsat yo'q. "
+    "Faqat rasm (JPEG/PNG) va Telegram orqali yuborilgan ovozli xabarlarni "
+    "qabul qilaman."
+)
+
 # Replies the bot is about to send, keyed by chat, as (text, sent_at) pairs.
 # Registered *before* the send call, because the outgoing-message update can
 # reach us before `event.reply()` returns — otherwise the bot mistakes its
@@ -292,11 +304,6 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
     if sender.id == settings.owner_id:
         return
 
-    # Ignore any file that isn't a photo or a voice note — never download
-    # documents, APKs, EXEs, ZIPs, etc.
-    if event.media is not None and not (event.photo or event.voice):
-        return
-
     chat_id = event.chat_id
     message_id = event.message.id
     user_name = getattr(sender, "first_name", None) or "Noma'lum"
@@ -312,6 +319,20 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
             await db.append_recent_message(
                 chat_id, "user", event.raw_text, settings.short_history_limit
             )
+        return
+
+    # Never download or open any file that isn't a photo or a voice note —
+    # documents, APKs, EXEs, ZIPs, videos, stickers, an image sent as a
+    # document instead of a compressed photo, etc. Reply immediately (no AI
+    # involved, no initial-reply wait — this is a fixed capability notice,
+    # not a judgment call) so the sender knows why nothing happened, rather
+    # than silently going nowhere.
+    if event.media is not None and not (event.photo or event.voice):
+        if _try_reserve_reply_slot(chat_id):
+            try:
+                await _send_bot_reply(event, chat_id, UNSUPPORTED_MEDIA_REPLY)
+            except Exception:
+                log.exception("Failed to send unsupported-media reply in chat %s", chat_id)
         return
 
     # Give the owner a window to reply personally first.
