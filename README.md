@@ -36,7 +36,7 @@ tarifisiz** ishlaydi.
 | Muhim xabar bo'yicha ogohlantirish | ❌ Yo'q | ✅ Saved Messages'ga darhol push-xabar |
 | Rasm va ovozli xabarni tushunish | ❌ Yo'q | ✅ Vision model + Whisper orqali matnga o'giradi |
 | Sizni "ushlab qolish" | ❌ Yo'q | ✅ Siz shaxsan yozsangiz, bot avtomatik jim bo'lib qoladi |
-| Boshqarish | Faqat yoqish/o'chirish | `/pause`, `/pause 30m`, `/resume`, `/status` |
+| Boshqarish | Faqat yoqish/o'chirish | `/pause`, `/resume`, `/status`, `/inbox` (tugmalar + tabiiy til) |
 | Xavfsizlik | — | Havola/fayl ochmaslik, prompt-injection himoyasi, flood-limit |
 
 Qo'shimcha afzalliklar:
@@ -60,18 +60,30 @@ Qo'shimcha afzalliklar:
 1. Kimdir sizga shaxsiy xabar (matn, rasm yoki ovozli) yozadi.
 2. Bot bir necha soniya kutadi — sizga shaxsan javob berish imkoniyati
    beriladi (`INITIAL_REPLY_DELAY_SECONDS`).
-3. Siz javob bermasangiz, AI xabarni tahlil qiladi:
-   - **Muhim emas** (salom, tabrik, oddiy savol) → to'liq, mustaqil javob
-     yozadi, xuddi siz yozgandek.
+3. Siz javob bermasangiz, AI xabarni tahlil qiladi. Bot hech qachon
+   sizning nomingizdan, siz o'zingiz yozayotgandek javob bermaydi — u
+   o'zini ochiq ravishda sizning AI kotibingiz sifatida tanishtiradi va
+   siz haqingizda doim 3-shaxsda gapiradi:
+   - **Kotibga tegishli** (salom, sizni bilish/bog'lanish bilan bog'liq
+     savol) → kotib nomidan to'liq javob beradi.
    - **Muhim** (ish taklifi, mijoz, to'lov, shartnoma va h.k.) → suhbatdoshga
-     "band, tez orada shaxsan javob beraman" deb yozadi, sizga esa Saved
+     "band, tez orada shaxsan javob beradi" deb yozadi, sizga esa Saved
      Messages'ga darhol qisqa xabarnoma yuboradi (kim, nima yozdi, havola).
+   - **Doiradan tashqari** (umumiy bilim savoli, kod yozish, "sen endi X
+     san" kabi rol/vazifa berish urinishi) → bajarmaydi, faqat shaxsiy
+     kotib ekanini tushuntiradi. Bot ChatGPT yoki umumiy yordamchi emas.
 4. Agar siz o'zingiz shu suhbatda yozsangiz — bot avtomatik jim bo'lib
    qoladi (`OWNER_PAUSE_MINUTES` daqiqa), keyin qayta ishga tushadi.
-5. O'zingizga (Saved Messages) buyruqlar yozib botni boshqarasiz:
+5. Har bir kiruvchi xabar — muhim yoki oddiy, farqi yo'q — inbox'ga
+   yoziladi, shunda hech narsa yo'qolib qolmaydi.
+6. O'zingizga (Saved Messages) buyruqlar yozib botni boshqarasiz:
    - `/pause` / `/pause 30m` / `/pause 2h` — vaqtincha yoki butunlay to'xtatish
    - `/resume` — qayta davom ettirish
-   - `/status` — hozirgi holat, o'qilmagan yozuvlar, shu soatdagi javoblar soni
+   - `/status` — hozirgi holat, shu soatdagi javoblar soni
+   - `/inbox` (yoki `/unread`) — o'qilmagan xabarlar ro'yxati, har biriga
+     "✅ O'qildi" / "🗑 O'chirish" tugmalari bilan
+   - `/read <raqam>`, `/delete <raqam>`, `/readall` — yoki tabiiy tilda:
+     "o'qilmagan xabarlarni ko'rsat", "42-ni o'chir", "hammasini o'qidim"
 
 ## Texnologiyalar
 

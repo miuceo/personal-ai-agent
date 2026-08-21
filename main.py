@@ -15,18 +15,25 @@ Behavior:
 - If more than 24h pass since the last message in a chat, the short-term
   "live" context resets (but the long-term memory summary is kept).
 - Owner commands (sent to Saved Messages): /pause (or /pause 30m, /pause 2h),
-  /resume, /status.
+  /resume, /status, /inbox (or /unread), /read <id>, /delete <id>, /readall.
+  Plain-language equivalents of the inbox commands also work (e.g.
+  "o'qilmagan xabarlarni ko'rsat", "42-ni o'chir") — see
+  _try_natural_language_inbox_command.
 - A message the model flags as `is_important` gets an immediate push to
   the owner's Saved Messages, in addition to the "band" auto-reply sent
-  to the other person. Non-important messages are just answered — nothing
-  is recorded anywhere for later review.
+  to the other person. Every incoming message (important or not) is also
+  recorded in the inbox table for later review/mark-read/delete — via
+  /inbox, the inline buttons on each listed item, or natural language.
+  Access is inherently owner-only (Saved Messages and button callbacks on
+  the owner's own account aren't reachable by anyone else).
 - Flood protection: auto-replies are capped per chat and globally within
   a rolling 1-hour window (MAX_REPLIES_PER_HOUR_PER_CHAT /
   MAX_REPLIES_PER_HOUR_GLOBAL). The slot is reserved before the LLM call
   starts (not after the reply is sent) so a burst of messages can't all
   slip past the check while earlier ones are still mid-flight.
 - Only text, photo, and voice messages are processed. Any other file type
-  (documents, APK, EXE, ZIP, etc.) is completely ignored — never downloaded.
+  (documents, APK, EXE, ZIP, etc.) gets an explicit "can't open this" reply
+  instead — nothing outside photo/voice is ever downloaded.
 
 Run with: python main.py
 """
@@ -39,7 +46,7 @@ import time
 from collections import defaultdict
 from typing import Optional
 
-from telethon import TelegramClient, events
+from telethon import Button, TelegramClient, events
 from telethon.sessions import StringSession
 
 import db
@@ -209,6 +216,119 @@ def _build_important_notification(user_name: str, sender, chat_id: int, message_
     return f"🔴 MUHIM XABAR — {user_name}\nXabar: {preview}\nSuhbat: {link}"
 
 
+# --- Inbox: every incoming message is recorded here (regardless of whether
+# the AI auto-replied to it) so the owner can review, mark read, or delete
+# them later — via /inbox, inline buttons, or plain-language requests in
+# Saved Messages. Access is inherently owner-only: Saved Messages and
+# button callbacks on the owner's own account are not reachable by anyone
+# else, and handle_callback double-checks the sender id regardless. ---
+
+INBOX_PAGE_SIZE = 10
+
+
+async def _record_inbox(
+    chat_id: int, user_name: str, message_text: str, is_important: bool, bot_reply: Optional[str]
+) -> None:
+    try:
+        await db.add_inbox_message(chat_id, user_name, message_text, is_important, bot_reply)
+    except Exception:
+        log.exception("Failed to record inbox message for chat %s", chat_id)
+
+
+def _inbox_buttons(message_id: int) -> list:
+    return [[
+        Button.inline("✅ O'qildi", data=f"read:{message_id}"),
+        Button.inline("🗑 O'chirish", data=f"delete:{message_id}"),
+    ]]
+
+
+async def _send_inbox_list(event: events.NewMessage.Event) -> None:
+    rows = await db.list_unread_inbox(INBOX_PAGE_SIZE)
+    total_unread = await db.count_unread_inbox()
+
+    if not rows:
+        await event.reply("O'qilmagan xabar yo'q.")
+        return
+
+    await event.reply(f"O'qilmagan xabarlar: {total_unread} ta. Oxirgi {len(rows)} tasi:")
+    for row in rows:
+        preview = (row["message_text"] or "(matn yo'q)").strip()
+        if len(preview) > 500:
+            preview = preview[:500] + "…"
+        important_mark = " 🔴" if row["is_important"] else ""
+        header = f"#{row['id']} — {row['user_name'] or 'Nomaʼlum'} ({row['created_at']:%Y-%m-%d %H:%M})"
+        await event.reply(f"{header}{important_mark}\n{preview}", buttons=_inbox_buttons(row["id"]))
+
+
+# Best-effort keyword matching for the owner's plain-language inbox
+# requests in Saved Messages (e.g. "o'qilmagan xabarlarni ko'rsat",
+# "42-ni o'chir"). Deliberately NOT LLM-based: these can trigger a
+# destructive action (delete), so behavior needs to be deterministic and
+# predictable rather than inferred by a model that could misread intent.
+_APOSTROPHES = str.maketrans("", "", "'’ʻʼ`")
+_NL_NUMBER_RE = re.compile(r"\d+")
+
+
+def _normalize_uz(text: str) -> str:
+    return text.lower().translate(_APOSTROPHES)
+
+
+async def _try_natural_language_inbox_command(event: events.NewMessage.Event, text: str) -> bool:
+    normalized = _normalize_uz(text)
+    number_match = _NL_NUMBER_RE.search(normalized)
+
+    if re.search(r"oqilmagan|inbox|yangi xabar", normalized) and not number_match:
+        await _send_inbox_list(event)
+        return True
+
+    if re.search(r"(hammasini|barchasini).{0,10}oqi", normalized):
+        n = await db.mark_all_inbox_read()
+        await event.reply(f"{n} ta xabar o'qildi deb belgilandi.")
+        return True
+
+    if "ochir" in normalized and number_match:
+        message_id = int(number_match.group())
+        ok = await db.delete_inbox_message(message_id)
+        await event.reply("O'chirildi." if ok else f"#{message_id} topilmadi.")
+        return True
+
+    if "oqi" in normalized and number_match:
+        message_id = int(number_match.group())
+        ok = await db.mark_inbox_read(message_id)
+        await event.reply("O'qildi deb belgilandi." if ok else f"#{message_id} topilmadi.")
+        return True
+
+    return False
+
+
+@client.on(events.CallbackQuery)
+async def handle_callback(event: events.CallbackQuery.Event) -> None:
+    try:
+        if event.sender_id != settings.owner_id:
+            await event.answer("Ruxsat yo'q.", alert=True)
+            return
+
+        action, _, id_text = event.data.decode().partition(":")
+        try:
+            message_id = int(id_text)
+        except ValueError:
+            await event.answer("Xato so'rov.")
+            return
+
+        if action == "read":
+            ok = await db.mark_inbox_read(message_id)
+            await event.answer("O'qildi deb belgilandi." if ok else "Topilmadi (o'chirilgan bo'lishi mumkin).")
+            if ok:
+                await event.edit(buttons=None)
+        elif action == "delete":
+            ok = await db.delete_inbox_message(message_id)
+            await event.answer("O'chirildi." if ok else "Topilmadi.")
+            if ok:
+                await event.delete()
+    except Exception:
+        log.exception("Failed to handle inbox callback")
+
+
 @client.on(events.NewMessage(outgoing=True))
 async def handle_owner_outgoing(event: events.NewMessage.Event) -> None:
     """Tracks when the owner personally sends a message in a private chat."""
@@ -282,6 +402,36 @@ async def handle_owner_command(event: events.NewMessage.Event) -> None:
             f"Bu soatda javoblar: {len(_global_reply_times)}/{settings.max_replies_per_hour_global}."
         )
 
+    elif text in ("/inbox", "/unread"):
+        await _send_inbox_list(event)
+
+    elif text == "/readall":
+        n = await db.mark_all_inbox_read()
+        await event.reply(f"{n} ta xabar o'qildi deb belgilandi.")
+
+    elif text.startswith("/read "):
+        id_text = text[len("/read ") :].strip()
+        if id_text.isdigit():
+            ok = await db.mark_inbox_read(int(id_text))
+            await event.reply("O'qildi deb belgilandi." if ok else f"#{id_text} topilmadi.")
+        else:
+            await event.reply("Noto'g'ri format. Masalan: /read 42")
+
+    elif text.startswith("/delete "):
+        id_text = text[len("/delete ") :].strip()
+        if id_text.isdigit():
+            ok = await db.delete_inbox_message(int(id_text))
+            await event.reply("O'chirildi." if ok else f"#{id_text} topilmadi.")
+        else:
+            await event.reply("Noto'g'ri format. Masalan: /delete 42")
+
+    elif not text.startswith("/"):
+        # Plain-language inbox requests ("o'qilmagan xabarlarni ko'rsat",
+        # "42-ni o'chir", ...). Anything unrecognized is left alone — Saved
+        # Messages doubles as the owner's personal notes, so silently
+        # ignoring unrelated text (as before) is the right default.
+        await _try_natural_language_inbox_command(event, text)
+
 
 @client.on(events.NewMessage(incoming=True))
 async def handle_incoming(event: events.NewMessage.Event) -> None:
@@ -319,6 +469,7 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
             await db.append_recent_message(
                 chat_id, "user", event.raw_text, settings.short_history_limit
             )
+            await _record_inbox(chat_id, user_name, event.raw_text, False, None)
         return
 
     # Never download or open any file that isn't a photo or a voice note —
@@ -331,6 +482,9 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
         if _try_reserve_reply_slot(chat_id):
             try:
                 await _send_bot_reply(event, chat_id, UNSUPPORTED_MEDIA_REPLY)
+                await _record_inbox(
+                    chat_id, user_name, "[qo'llab-quvvatlanmaydigan fayl]", False, UNSUPPORTED_MEDIA_REPLY
+                )
             except Exception:
                 log.exception("Failed to send unsupported-media reply in chat %s", chat_id)
         return
@@ -342,6 +496,7 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
             await db.append_recent_message(
                 chat_id, "user", event.raw_text, settings.short_history_limit
             )
+            await _record_inbox(chat_id, user_name, event.raw_text, False, None)
         return
     await asyncio.sleep(INITIAL_REPLY_DELAY_SECONDS)
 
@@ -355,6 +510,7 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
             await db.append_recent_message(
                 chat_id, "user", event.raw_text, settings.short_history_limit
             )
+            await _record_inbox(chat_id, user_name, event.raw_text, False, None)
         return
 
     memory = await db.get_memory(chat_id)
@@ -363,6 +519,7 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
             await db.append_recent_message(
                 chat_id, "user", event.raw_text, settings.short_history_limit
             )
+            await _record_inbox(chat_id, user_name, event.raw_text, False, None)
         return
 
     # Flood protection: reserve a slot now, before the slow LLM call, so a
@@ -375,6 +532,7 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
             await db.append_recent_message(
                 chat_id, "user", event.raw_text, settings.short_history_limit
             )
+            await _record_inbox(chat_id, user_name, event.raw_text, False, None)
         return
 
     text = event.raw_text or ""
@@ -389,13 +547,13 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
             text = await transcribe.transcribe_voice(voice_bytes)
         except Exception:
             log.exception("Voice transcription failed for chat %s", chat_id)
+            apology = (
+                "Ovozli xabaringizni tushunolmadim — texnik xatolik yuz berdi. "
+                "Iltimos, matn bilan yozib yuboring."
+            )
             try:
-                await _send_bot_reply(
-                    event,
-                    chat_id,
-                    "Ovozli xabaringizni tushunolmadim — texnik xatolik yuz berdi. "
-                    "Iltimos, matn bilan yozib yuboring.",
-                )
+                await _send_bot_reply(event, chat_id, apology)
+                await _record_inbox(chat_id, user_name, "[ovozli xabar — transkripsiya xatosi]", False, apology)
             except Exception:
                 log.exception("Failed to send transcription-failure reply in chat %s", chat_id)
             return
@@ -435,6 +593,7 @@ async def _handle_incoming(event: events.NewMessage.Event) -> None:
             log.exception("Failed to send importance notification for chat %s", chat_id)
 
     await _send_bot_reply(event, chat_id, reply_text)
+    await _record_inbox(chat_id, user_name, text or "(rasm)", is_important, reply_text)
 
     # Single read-modify-write for the assistant turn + summary + timestamp,
     # replacing what used to be three separate DB round-trips.

@@ -81,6 +81,24 @@ async def init_db() -> None:
             )
             """
         )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS inbox_messages (
+                id BIGSERIAL PRIMARY KEY,
+                chat_id BIGINT NOT NULL,
+                user_name TEXT,
+                message_text TEXT,
+                is_important BOOLEAN NOT NULL DEFAULT FALSE,
+                bot_reply TEXT,
+                is_read BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS inbox_messages_unread_idx "
+            "ON inbox_messages (created_at) WHERE is_read = FALSE"
+        )
 
 
 def _pool_or_raise() -> asyncpg.Pool:
@@ -257,3 +275,65 @@ async def set_state(key: str, value: str) -> None:
 async def delete_state(key: str) -> None:
     pool = _pool_or_raise()
     await pool.execute("DELETE FROM bot_state WHERE key = $1", key)
+
+
+# --- Inbox: a record of every incoming message the owner can review,
+# mark read, or delete, independent of the per-chat memory blob above. ---
+
+
+async def add_inbox_message(
+    chat_id: int, user_name: str, message_text: str, is_important: bool, bot_reply: Optional[str]
+) -> int:
+    pool = _pool_or_raise()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO inbox_messages (chat_id, user_name, message_text, is_important, bot_reply)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+        """,
+        chat_id,
+        user_name,
+        message_text,
+        is_important,
+        bot_reply,
+    )
+    return row["id"]
+
+
+async def list_unread_inbox(limit: int) -> list[asyncpg.Record]:
+    pool = _pool_or_raise()
+    return await pool.fetch(
+        "SELECT * FROM inbox_messages WHERE is_read = FALSE ORDER BY created_at ASC LIMIT $1",
+        limit,
+    )
+
+
+async def count_unread_inbox() -> int:
+    pool = _pool_or_raise()
+    row = await pool.fetchrow("SELECT COUNT(*) AS c FROM inbox_messages WHERE is_read = FALSE")
+    return row["c"]
+
+
+async def get_inbox_message(message_id: int) -> Optional[asyncpg.Record]:
+    pool = _pool_or_raise()
+    return await pool.fetchrow("SELECT * FROM inbox_messages WHERE id = $1", message_id)
+
+
+async def mark_inbox_read(message_id: int) -> bool:
+    pool = _pool_or_raise()
+    result = await pool.execute(
+        "UPDATE inbox_messages SET is_read = TRUE WHERE id = $1", message_id
+    )
+    return result.split()[-1] != "0"
+
+
+async def mark_all_inbox_read() -> int:
+    pool = _pool_or_raise()
+    result = await pool.execute("UPDATE inbox_messages SET is_read = TRUE WHERE is_read = FALSE")
+    return int(result.split()[-1])
+
+
+async def delete_inbox_message(message_id: int) -> bool:
+    pool = _pool_or_raise()
+    result = await pool.execute("DELETE FROM inbox_messages WHERE id = $1", message_id)
+    return result.split()[-1] != "0"

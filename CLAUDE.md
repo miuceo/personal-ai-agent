@@ -35,6 +35,7 @@ foydalanuvchiga ko'rinadigan barcha matnlar **o'zbek tilida**.
 6. LLM chaqiriladi → `{reply, is_important, memory_summary}`
 7. `is_important` bo'lsa — egasiga Saved Messages'ga push
 8. Javob yuboriladi, xotira yangilanadi
+9. Xabar (javob berilgan yoki yo'q, farqi yo'q) inbox'ga yoziladi
 
 ## Muhim arxitektura qoidalari
 
@@ -86,6 +87,22 @@ cheksiz o'sishi sekin-asta javob vaqtini va xarajatni oshiradi.
 (masalan noto'g'ri so'rov) — zanjir **darhol to'xtaydi**, chunki bir xil
 xato barcha providerlarda takrorlanadi. Yangi provider qo'shsangiz, shu
 `ProviderError(retryable=...)` naqshiga rioya qiling.
+
+**Inbox — barcha kiruvchi xabarlar yozib boriladi (`db.py`ning
+`inbox_messages` jadvali, `main.py`ning `_record_inbox`)**
+Har bir kiruvchi xabar (AI javob berganmi yoki yo'qmi, farqi yo'q)
+`_handle_incoming`ning **har bir chiqish nuqtasida** inbox'ga yoziladi —
+yangi "erta return" qo'shsangiz, shu yerga ham `_record_inbox` chaqiruvini
+qo'shishni unutmang, aks holda o'sha yo'ldan o'tgan xabarlar inbox'da
+ko'rinmay qoladi. Egasi buni `/inbox`, tugmalar (`✅ O'qildi` / `🗑
+O'chirish`, `handle_callback`) yoki tabiiy tilda (Saved Messages'ga
+"o'qilmagan xabarlarni ko'rsat" kabi, `_try_natural_language_inbox_command`)
+boshqaradi. Bu til aniqlash **ataylab LLM emas** — regex/kalit-so'z asosida
+— chunki `delete` kabi qaytarib bo'lmaydigan amalni chaqirishi mumkin,
+shuning uchun mo'ljallangan, aniq-taxmin qilinadigan xatti-harakat kerak.
+Kirish nazorati arxitektura darajasida: `handle_callback` har doim
+`event.sender_id == settings.owner_id`ni tekshiradi, va Saved
+Messages/tugmalar allaqachon faqat egaga ko'rinadi.
 
 ## Xavfsizlik — qat'iy qoidalar
 
